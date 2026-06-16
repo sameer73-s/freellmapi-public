@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { createApp } from './app.js';
 import { initDb, getSetting } from './db/index.js';
+import { isTursoEnabled } from './db/turso.js';
+import { syncFromTurso, migrateSchemaOnTurso } from './db/turso-sync.js';
 import { startHealthChecker } from './services/health.js';
 import { applyProxyUrl, applyProxyEnabled, applyProxyBypass } from './lib/proxy.js';
 import { startCatalogSync } from './services/catalog-sync.js';
@@ -31,7 +33,13 @@ function migrateDbIfNeeded(): void {
 
 async function main() {
   migrateDbIfNeeded();
-  initDb();
+  const localDb = initDb();
+
+  // إذا Turso مفعّل: زامن الـ schema والبيانات
+  if (isTursoEnabled()) {
+    await migrateSchemaOnTurso(localDb);
+    await syncFromTurso(localDb);
+  }
 
   // Load the persisted proxy settings from the DB (env var wins if set).
   // Must happen after initDb so the settings table is ready.

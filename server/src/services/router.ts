@@ -1,4 +1,5 @@
 import { getDb, getSetting, setSetting } from '../db/index.js';
+import { isTursoEnabled, tursoRun } from '../db/turso.js';
 import { getProvider, hasProvider, resolveProvider } from '../providers/index.js';
 import { decrypt } from '../lib/crypto.js';
 import { canMakeRequest, canUseTokens, isOnCooldown, canUseProvider } from './ratelimit.js';
@@ -136,6 +137,13 @@ export function markFreeKeyFailure(keyId: number): void {
     SET consecutive_failures = ?, free_tier_cooldown_until = ?
     WHERE id = ?
   `).run(newFailures, cooldownUntil, keyId);
+
+  if (isTursoEnabled()) {
+    tursoRun(
+      'UPDATE api_keys SET consecutive_failures = ?, free_tier_cooldown_until = ? WHERE id = ?',
+      [newFailures, cooldownUntil, keyId]
+    ).catch(e => console.error('[turso] Failed to sync markFreeKeyFailure:', e));
+  }
 }
 
 /**
@@ -154,6 +162,13 @@ export function markFreeKeySuccess(keyId: number): void {
     SET consecutive_failures = 0, free_tier_cooldown_until = NULL
     WHERE id = ?
   `).run(keyId);
+
+  if (isTursoEnabled()) {
+    tursoRun(
+      'UPDATE api_keys SET consecutive_failures = 0, free_tier_cooldown_until = NULL WHERE id = ?',
+      [keyId]
+    ).catch(e => console.error('[turso] Failed to sync markFreeKeySuccess:', e));
+  }
 }
 
 /**

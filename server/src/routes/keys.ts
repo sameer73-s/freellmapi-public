@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getDb } from '../db/index.js';
 import { resolveProvider } from '../providers/index.js';
 import { encrypt, decrypt, maskKey } from '../lib/crypto.js';
+import { isTursoEnabled, tursoRun } from '../db/turso.js';
 
 export const keysRouter = Router();
 
@@ -67,7 +68,7 @@ keysRouter.get('/', (_req: Request, res: Response) => {
 });
 
 // Add a key
-keysRouter.post('/', (req: Request, res: Response) => {
+keysRouter.post('/', async (req: Request, res: Response) => {
   const parsed = addKeySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: { message: parsed.error.errors.map(e => e.message).join(', ') } });
@@ -114,6 +115,25 @@ keysRouter.post('/', (req: Request, res: Response) => {
     INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled, is_free_tier, free_key_source)
     VALUES (?, ?, ?, ?, ?, 'unknown', 1, ?, ?)
   `).run(platform, label ?? '', encrypted, iv, authTag, isFreeTier, freeKeySource);
+
+  // حفظ على Turso إذا مفعّل
+  if (isTursoEnabled()) {
+    await tursoRun(
+      `INSERT OR IGNORE INTO api_keys
+        (id, platform, label, encrypted_key, iv, auth_tag, status, enabled, is_free_tier, free_key_source, base_url)
+       VALUES (?, ?, ?, ?, ?, ?, 'unknown', 1, ?, ?, NULL)`,
+      [
+        Number(result.lastInsertRowid),
+        platform,
+        label ?? '',
+        encrypted,
+        iv,
+        authTag,
+        isFreeTier,
+        freeKeySource,
+      ]
+    );
+  }
 
   res.status(201).json({
     id: result.lastInsertRowid,
@@ -255,7 +275,7 @@ keysRouter.post('/custom', (req: Request, res: Response) => {
 });
 
 // Delete a key
-keysRouter.delete('/:id', (req: Request, res: Response) => {
+keysRouter.delete('/:id', async (req: Request, res: Response) => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) {
     res.status(400).json({ error: { message: 'Invalid key ID' } });
@@ -288,6 +308,10 @@ keysRouter.delete('/:id', (req: Request, res: Response) => {
   });
   remove();
 
+  if (isTursoEnabled()) {
+    await tursoRun('DELETE FROM api_keys WHERE id = ?', [id]);
+  }
+
   res.json({ success: true });
 });
 
@@ -312,7 +336,7 @@ keysRouter.patch('/platform/:platform', (req: Request, res: Response) => {
 });
 
 // Update key (toggle enable/disable or edit label)
-keysRouter.patch('/:id', (req: Request, res: Response) => {
+keysRouter.patch('/:id', async (req: Request, res: Response) => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) {
     res.status(400).json({ error: { message: 'Invalid key ID' } });
@@ -346,6 +370,15 @@ keysRouter.patch('/:id', (req: Request, res: Response) => {
   if (result.changes === 0) {
     res.status(404).json({ error: { message: 'Key not found' } });
     return;
+  }
+
+  if (isTursoEnabled()) {
+    if (enabled !== undefined) {
+      await tursoRun('UPDATE api_keys SET enabled = ? WHERE id = ?', [enabled ? 1 : 0, id]);
+    }
+    if (label !== undefined) {
+      await tursoRun('UPDATE api_keys SET label = ? WHERE id = ?', [label, id]);
+    }
   }
 
   const response: Record<string, unknown> = { success: true };

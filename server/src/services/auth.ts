@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { getDb } from '../db/index.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
+import { isTursoEnabled, tursoRun } from '../db/turso.js';
 
 // Dashboard authentication: email + password accounts with opaque session
 // tokens. Distinct from the unified API key, which authenticates the /v1 proxy
@@ -36,9 +37,20 @@ export function createUser(email: string, password: string): SessionUser {
     err.code = 'email_taken';
     throw err;
   }
+  const passwordHash = hashPassword(password);
   const result = db.prepare('INSERT INTO users (email, password_hash) VALUES (?, ?)')
-    .run(normalized, hashPassword(password));
-  return { userId: Number(result.lastInsertRowid), email: normalized };
+    .run(normalized, passwordHash);
+  const userId = Number(result.lastInsertRowid);
+  const createdAt = new Date().toISOString();
+
+  if (isTursoEnabled()) {
+    tursoRun(
+      'INSERT OR IGNORE INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)',
+      [userId, normalized, passwordHash, createdAt]
+    ).catch(e => console.error('[turso] Failed to sync user:', e));
+  }
+
+  return { userId, email: normalized };
 }
 
 /** Verify credentials. Returns the user on success, null on failure. */
@@ -54,8 +66,18 @@ export function verifyCredentials(email: string, password: string): SessionUser 
 /** Mint a session and return the raw token (only the hash is persisted). */
 export function createSession(userId: number): string {
   const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = sha256(token);
+  const expiresAt = Date.now() + SESSION_TTL_MS;
   getDb().prepare('INSERT INTO sessions (token_hash, user_id, expires_at_ms) VALUES (?, ?, ?)')
-    .run(sha256(token), userId, Date.now() + SESSION_TTL_MS);
+    .run(tokenHash, userId, expiresAt);
+
+  if (isTursoEnabled()) {
+    tursoRun(
+      'INSERT OR IGNORE INTO sessions (token_hash, user_id, expires_at_ms) VALUES (?, ?, ?)',
+      [tokenHash, userId, expiresAt]
+    ).catch(e => console.error('[turso] Failed to sync session:', e));
+  }
+
   return token;
 }
 
