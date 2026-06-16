@@ -1,4 +1,6 @@
 import './env.js';
+import fs from 'fs';
+import path from 'path';
 import { createApp } from './app.js';
 import { initDb, getSetting } from './db/index.js';
 import { startHealthChecker } from './services/health.js';
@@ -11,7 +13,24 @@ const PORT = process.env.PORT ?? 3001;
 // disabled fall back to IPv4-only below; HOST overrides the default outright.
 const HOST = process.env.HOST ?? '::';
 
+function migrateDbIfNeeded(): void {
+  const newPath = process.env.SQLITE_DB_PATH;
+  if (!newPath) return;
+
+  const oldPath = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname),
+    '../data/freeapi.db'
+  );
+
+  if (fs.existsSync(oldPath) && !fs.existsSync(newPath)) {
+    fs.mkdirSync(path.dirname(newPath), { recursive: true });
+    fs.copyFileSync(oldPath, newPath);
+    console.log(`[db] Migrated database: ${oldPath} → ${newPath}`);
+  }
+}
+
 async function main() {
+  migrateDbIfNeeded();
   initDb();
 
   // Load the persisted proxy settings from the DB (env var wins if set).

@@ -6,7 +6,8 @@ import { fileURLToPath } from 'url';
 import { migrateDbSchema } from './migrations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.resolve(__dirname, '../../data/freeapi.db');
+const DB_PATH = process.env.SQLITE_DB_PATH
+  ?? path.resolve(__dirname, '../../data/freeapi.db');
 
 let db: Database.Database;
 

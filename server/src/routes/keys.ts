@@ -23,6 +23,8 @@ const addKeySchema = z.object({
   platform: z.enum(PLATFORMS),
   key: z.string().optional(),
   label: z.string().optional(),
+  isFreeTier: z.boolean().optional().default(false),
+  freeKeySource: z.string().optional(),
 });
 
 const updateKeySchema = z.object({
@@ -53,6 +55,9 @@ keysRouter.get('/', (_req: Request, res: Response) => {
       baseUrl: row.base_url ?? null,
       status: row.status,
       enabled: row.enabled === 1,
+      isFreeTier: row.is_free_tier === 1,
+      freeKeySource: row.free_key_source ?? null,
+      consecutiveFailures: row.consecutive_failures ?? 0,
       createdAt: row.created_at,
       lastCheckedAt: row.last_checked_at,
     };
@@ -103,10 +108,12 @@ keysRouter.post('/', (req: Request, res: Response) => {
   }
 
   const { encrypted, iv, authTag } = encrypt(keyToStore);
+  const isFreeTier = parsed.data.isFreeTier ? 1 : 0;
+  const freeKeySource = parsed.data.freeKeySource ?? null;
   const result = db.prepare(`
-    INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled)
-    VALUES (?, ?, ?, ?, ?, 'unknown', 1)
-  `).run(platform, label ?? '', encrypted, iv, authTag);
+    INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled, is_free_tier, free_key_source)
+    VALUES (?, ?, ?, ?, ?, 'unknown', 1, ?, ?)
+  `).run(platform, label ?? '', encrypted, iv, authTag, isFreeTier, freeKeySource);
 
   res.status(201).json({
     id: result.lastInsertRowid,
@@ -346,3 +353,52 @@ keysRouter.patch('/:id', (req: Request, res: Response) => {
   if (label !== undefined) response.label = label;
   res.json(response);
 });
+
+// ── Bulk import free-tier keys (e.g. from free-llm-api-keys repo) ──────────────
+const freeBulkSchema = z.object({
+  keys: z.array(z.object({
+    platform: z.enum(PLATFORMS),
+    key: z.string().min(1),
+    source: z.string().optional(),
+  })).min(1),
+});
+
+keysRouter.post('/free-bulk', (req: Request, res: Response) => {
+  const parsed = freeBulkSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: parsed.error.errors[0]?.message } });
+    return;
+  }
+
+  const db = getDb();
+  let imported = 0;
+  let skipped = 0;
+
+  const insertStmt = db.prepare(`
+    INSERT INTO api_keys
+      (platform, label, encrypted_key, iv, auth_tag, status, enabled, is_free_tier, free_key_source)
+    VALUES (?, ?, ?, ?, ?, 'unknown', 1, 1, ?)
+  `);
+
+  db.transaction(() => {
+    for (const { platform, key, source } of parsed.data.keys) {
+      try {
+        const { encrypted, iv, authTag } = encrypt(key.trim());
+        insertStmt.run(
+          platform,
+          `[free] ${source ?? platform}`,
+          encrypted,
+          iv,
+          authTag,
+          source ?? null,
+        );
+        imported++;
+      } catch {
+        skipped++;
+      }
+    }
+  })();
+
+  res.json({ imported, skipped });
+});
+

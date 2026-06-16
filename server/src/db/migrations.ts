@@ -47,6 +47,7 @@ export function migrateDbSchema(db: Database.Database) {
   migrateQuirksV1(db);
   ensureUnifiedKey(db);
   migrateProfilesInit(db);
+  migrateFreeTierV1(db);
 }
 
 function createTables(db: Database.Database) {
@@ -2215,3 +2216,29 @@ function migrateProfilesInit(db: Database.Database) {
   }
 }
 
+function migrateFreeTierV1(db: Database.Database) {
+  const columns = (
+    db.prepare('PRAGMA table_info(api_keys)').all() as { name: string }[]
+  ).map(c => c.name);
+
+  if (!columns.includes('is_free_tier')) {
+    db.prepare(
+      'ALTER TABLE api_keys ADD COLUMN is_free_tier INTEGER NOT NULL DEFAULT 0'
+    ).run();
+  }
+  if (!columns.includes('free_key_source')) {
+    db.prepare(
+      'ALTER TABLE api_keys ADD COLUMN free_key_source TEXT'
+    ).run();
+  }
+  if (!columns.includes('consecutive_failures')) {
+    db.prepare(
+      'ALTER TABLE api_keys ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0'
+    ).run();
+  }
+  if (!columns.includes('free_tier_cooldown_until')) {
+    db.prepare(
+      'ALTER TABLE api_keys ADD COLUMN free_tier_cooldown_until INTEGER'
+    ).run();
+  }
+}

@@ -29,6 +29,9 @@ interface KeyRow {
   status: string;
   enabled: number;
   base_url: string | null;
+  is_free_tier: number;
+  consecutive_failures: number;
+  free_tier_cooldown_until: number | null;
 }
 
 // Chain row joined with the model fields the bandit needs to score it.
@@ -109,6 +112,48 @@ export function recordSuccess(modelDbId: number) {
       rateLimitPenalties.delete(modelDbId);
     }
   }
+}
+
+/**
+ * تُسجّل فشلاً لمفتاح مجاني وتضع cooldown مؤقت بعد 3 فشل متتالية.
+ */
+export function markFreeKeyFailure(keyId: number): void {
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT is_free_tier, consecutive_failures FROM api_keys WHERE id = ?'
+  ).get(keyId) as { is_free_tier: number; consecutive_failures: number } | undefined;
+
+  if (!row?.is_free_tier) return;
+
+  const cooldownMinutes = parseInt(process.env.FREE_KEYS_COOLDOWN_MINUTES ?? '60', 10);
+  const newFailures = (row.consecutive_failures ?? 0) + 1;
+  const cooldownUntil = newFailures >= 3
+    ? Date.now() + cooldownMinutes * 60 * 1000
+    : null;
+
+  db.prepare(`
+    UPDATE api_keys
+    SET consecutive_failures = ?, free_tier_cooldown_until = ?
+    WHERE id = ?
+  `).run(newFailures, cooldownUntil, keyId);
+}
+
+/**
+ * تُعيد تعيين عداد الفشل عند نجاح مفتاح مجاني.
+ */
+export function markFreeKeySuccess(keyId: number): void {
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT is_free_tier FROM api_keys WHERE id = ?'
+  ).get(keyId) as { is_free_tier: number } | undefined;
+
+  if (!row?.is_free_tier) return;
+
+  db.prepare(`
+    UPDATE api_keys
+    SET consecutive_failures = 0, free_tier_cooldown_until = NULL
+    WHERE id = ?
+  `).run(keyId);
 }
 
 /**
@@ -602,9 +647,14 @@ export function routeRequest(estimatedTokens = 1000, skipKeys?: Set<string>, pre
     const provider = getProvider(entry.platform as Platform)!;
 
     // Get enabled keys that have not already failed validation or decryption.
-    const keys = db.prepare(
-      "SELECT * FROM api_keys WHERE platform = ? AND enabled = 1 AND status IN ('healthy', 'unknown')"
-    ).all(entry.platform) as KeyRow[];
+    const keys = db.prepare(`
+      SELECT * FROM api_keys
+      WHERE platform = ?
+        AND enabled = 1
+        AND status IN ('healthy', 'unknown')
+        AND (free_tier_cooldown_until IS NULL OR free_tier_cooldown_until < ?)
+      ORDER BY is_free_tier DESC, id ASC
+    `).all(entry.platform, Date.now()) as KeyRow[];
 
     if (keys.length === 0) continue;
 

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: freellmapi
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    disk:
+      name: freellmapi-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: SQLITE_DB_PATH
+        value: /var/data/freellmapi.db
+      - key: FREE_KEYS_ENABLED
+        value: "true"
+      - key: FREE_KEYS_COOLDOWN_MINUTES
+        value: "60"
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
