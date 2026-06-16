@@ -75,7 +75,10 @@ export async function migrateSchemaOnTurso(db: Database.Database): Promise<void>
   // Export all CREATE TABLE statements from the in-memory DB
   const tables = db
     .prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
+      `SELECT sql FROM sqlite_master 
+       WHERE type='table' 
+         AND sql IS NOT NULL
+         AND name NOT LIKE 'sqlite_%'`
     )
     .all() as { sql: string }[];
 
