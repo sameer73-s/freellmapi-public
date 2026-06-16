@@ -13,6 +13,7 @@ import { createClient, type Client } from '@libsql/client';
 let tursoClient: Client | null = null;
 
 export function isTursoEnabled(): boolean {
+  console.log('[turso] TURSO_DATABASE_URL =', process.env.TURSO_DATABASE_URL ? 'SET' : 'NOT SET');
   return !!process.env.TURSO_DATABASE_URL;
 }
 
@@ -77,4 +78,6 @@ export async function tursoBatch(statements: { sql: string; args?: (string | num
     statements.map(s => ({ sql: s.sql, args: s.args ?? [] })),
     'write'
   );
+  
 }
+
